@@ -392,17 +392,3 @@ def print_summary(results):
     print("="*65)
     print("\nKey finding: M=7 offers best CR–SDR trade-off (paper conclusion)")
 
-
-# ─────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────
-if __name__ == "__main__":
-    print("LC-ADC Micromodel Simulation")
-    print("ECEN432 TAMU\n")
-    print(f"{'M':>3} {'Fc (Hz)':>10} {'N':>3} {'CR':>7} {'SDR (dB)':>10}")
-    print("-"*45)
-
-    t, ecg, results = run_simulation()
-    print_summary(results)
-    make_plots(t, ecg, results)
-

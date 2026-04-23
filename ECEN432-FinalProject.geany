@@ -28,9 +28,9 @@ long_line_behaviour=1
 long_line_column=72
 
 [files]
-current_page=1
-FILE_NAME_0=310;Python;0;EUTF-8;1;1;0;C%3A%5CUsers%5C12gag%5CDocuments%5CGitProjects%5CECEN432-FinalProject%5CEval_LC-ADC_Micromodel.py;0;4
-FILE_NAME_1=15138;Python;0;EUTF-8;1;1;0;C%3A%5CUsers%5C12gag%5CDocuments%5CGitProjects%5CECEN432-FinalProject%5CLC-ADC.py;0;4
+current_page=0
+FILE_NAME_0=988;Python;0;EUTF-8;1;1;0;C%3A%5CUsers%5C12gag%5CDocuments%5CGitProjects%5CECEN432-FinalProject%5CEval_LC-ADC_Micromodel.py;0;4
+FILE_NAME_1=4332;Python;0;EUTF-8;1;1;0;C%3A%5CUsers%5C12gag%5CDocuments%5CGitProjects%5CECEN432-FinalProject%5CLC-ADC.py;0;4
 
 [build-menu]
 EX_00_LB=_Execute
