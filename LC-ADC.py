@@ -9,6 +9,24 @@ from scipy import interpolate
 
 
 # ─────────────────────────────────────────────
+# PAPER TABLE I  – LC-ADC MODEL PARAMETERS
+# ─────────────────────────────────────────────
+# (M, Fc_Hz, N)  extracted from Table I of the paper
+TABLE_I = {
+    2:  (74.13,    8),
+    3:  (148.26,   8),
+    4:  (296.51,   7),
+    5:  (593.03,   7),
+    6:  (1186.06,  7),
+    7:  (2372.12,  4),
+    8:  (4744.24,  3),
+    9:  (9488.49,  3),
+    10: (18976.97, 3),
+    11: (37953.94, 3),
+}
+
+
+# ─────────────────────────────────────────────
 # ECG SIGNAL GENERATOR
 # _____________________________________________
 def generate_synthetic_ecg(duration_s=3.0, fs=360, heart_rate=72):
@@ -22,9 +40,9 @@ def generate_synthetic_ecg(duration_s=3.0, fs=360, heart_rate=72):
 	heart_rate:	Number of repetitions per minute
 	"""
 	# --- Local Variables ---
-	t =				ndarray # List of time-markers
-	ecg = 			array # List of ECG values
-	rr_interval		float # Time between beats in seconds
+	t =				list # List of time-markers
+	ecg = 			list # List of ECG values
+	rr_interval	=	float # Time between beats in seconds
 	bt =			float # Time relative to start of current beat
 	p_mask =		bool # Mask for P-part
 	q_mask =		bool # Mask for Q-part
@@ -81,14 +99,26 @@ def lcadc_model(t_in, ecg_in, M, Fc, N, delta_v_lsbs=1, A_FS=10e-3):
     A_FS        : full-scale voltage range (V) — paper uses 10 mVpp
     """
     # --- Local Variables ---
-    q = 			float
-    delta_v = 		float
-    max_TI_count = 	float
+    q = 				float # LSB Size
+    delta_v = 			float # Threshold Width
+    max_TI_count = 		float # Counter Limit Until Rollover
+    ecg_q0 = 			float # Initial ECG value
+    L_QL =				float # Lower threshold value
+    U_QL =				float # Upper threshold value
+    t_events =			list # Tracks ADC input times
+    ecg_out =			list # Tracks ADC Outputs for ECG
+    time_intervals = 	list # Tracks intervals of sample times
+    last_event_t =		float # Tracks the time of the last trigger
+    last_amp =			float # Tracks the amplitude of the last trigger
+    sample =			float # Current sample of the ECG Input
+    elapsed =			float # Elapsed time since last output
+    TI_Counts =			float # Number of cycles since last trigger
+    n_steps =			int # Tracks number of threshold steps if signal overshoots 1 LSB
     
-    
-    q = A_FS / (2**M)            # LSB size (eq. 1)
-    delta_v = delta_v_lsbs * q  # threshold gap (eq. 2)
-    max_TI_count = 2**N - 1     # counter rollover value
+  
+    q = A_FS / (2**M)
+    delta_v = delta_v_lsbs * q
+    max_TI_count = 2**N - 1
 
     # Quantise first sample and set initial thresholds
     ecg_q0 = np.floor(ecg_in[0] / q) * q
@@ -143,14 +173,16 @@ def lcadc_model(t_in, ecg_in, M, Fc, N, delta_v_lsbs=1, A_FS=10e-3):
                 U_QL -= q
                 L_QL -= q
 
+	# Output trigger times, ECG Signal Samples, and the timer intervals between samples
     return (np.array(t_events), np.array(ecg_out), np.array(time_intervals))
 
 
 # ─────────────────────────────────────────────
-# 3.  SIGNAL RECONSTRUCTION (linear interp)
+#  SIGNAL RECONSTRUCTION (linear interp)
 # ─────────────────────────────────────────────
 def reconstruct_signal(t_events, ecg_out, t_uniform, Fc):
     """Reconstruct uniformly-sampled signal via linear interpolation."""
+    
     if len(t_events) < 2:
         return np.zeros_like(t_uniform)
     f_interp = interpolate.interp1d(t_events, ecg_out,
@@ -161,10 +193,14 @@ def reconstruct_signal(t_events, ecg_out, t_uniform, Fc):
 
 
 # ─────────────────────────────────────────────
-# 4.  PERFORMANCE METRICS  (Section II-B)
+# PERFORMANCE METRICS  (Section II-B)
 # ─────────────────────────────────────────────
 def compute_SDR(x_orig, x_hat):
-    """Signal-to-Distortion Ratio (eq. 3)."""
+    """Signal-to-Distortion Ratio"""
+    # --- Local Variables ---
+    signal_power = 		list # Power of Sampled Signal
+    distortion_power =	list # Power of the noise distortion
+    
     signal_power = np.mean((x_orig - np.mean(x_orig))**2)
     distortion_power = np.mean((x_orig - x_hat)**2)
     if distortion_power < 1e-20:
@@ -177,6 +213,11 @@ def compute_CR(ecg_orig_len, fs_orig, t_events, M, N, Fc):
     Compression Ratio = bits/sec (uniform) / bits/sec (LC-ADC).
     Uniform ADC assumed 11-bit at fs_orig Hz.
     """
+    # --- Local Variables ---
+    uniform_bps = 	int # Bit rate of uniform ADC
+    lc_rate = 		int # sampling rate of LC-ADC
+    lc_bps = 		int # Bit rate of LC-ADC
+    
     uniform_bps = fs_orig * 11
     lc_rate = len(t_events) / (t_events[-1] - t_events[0])
     lc_bps = lc_rate * (M + N)
@@ -184,152 +225,161 @@ def compute_CR(ecg_orig_len, fs_orig, t_events, M, N, Fc):
 
 
 # ─────────────────────────────────────────────
-# 5.  PAPER TABLE I  – LC-ADC MODEL PARAMETERS
-# ─────────────────────────────────────────────
-# (M, Fc_Hz, N)  extracted from Table I of the paper
-TABLE_I = {
-    2:  (74.13,    8),
-    3:  (148.26,   8),
-    4:  (296.51,   7),
-    5:  (593.03,   7),
-    6:  (1186.06,  7),
-    7:  (2372.12,  4),
-    8:  (4744.24,  3),
-    9:  (9488.49,  3),
-    10: (18976.97, 3),
-    11: (37953.94, 3),
-}
-
-
-# ─────────────────────────────────────────────
-# 6.  RUN SIMULATIONS
+# RUN SIMULATIONS
 # ─────────────────────────────────────────────
 def run_simulation():
-    fs = 2385          # upsample to match paper's Fc for M=7
-    t, ecg = generate_synthetic_ecg(duration_s=3.0, fs=fs)
+	"""
+	Runs simulations to demonstrate the performance of an LC-ADC
+	"""
+	# --- Local Variables ---
+	fs = 		int # Sampling frequency
+	t = 		list # Input Times
+	ecg = 		list # Input ECG Signals
+	results = 	dict # Holds time and sample results
+	Fc =		float # Clock frequency
+	N = 		int # Clock Resolution
+	t_ev = 		list # Times of Samples
+	amp_ev = 	list # Sampled Signal Amplitudes
+	ti_ev = 	list # Time Intervals of Samples
+	sdr = 		float # Calculated SDR
+	cr = 		float # Calculated CR
 
-    results = {}
-    for M in range(2, 12):
-        Fc, N = TABLE_I[M]
-        t_ev, amp_ev, ti_ev = lcadc_model(t, ecg, M=M, Fc=Fc, N=N,
-                                          delta_v_lsbs=1)
-        if len(t_ev) < 3:
-            continue
-        ecg_hat = reconstruct_signal(t_ev, amp_ev, t, Fc)
-        sdr = compute_SDR(ecg, ecg_hat)
-        cr  = compute_CR(len(ecg), fs, t_ev, M, N, Fc)
-        results[M] = dict(Fc=Fc, N=N, SDR=sdr, CR=cr,
-                          t_ev=t_ev, amp_ev=amp_ev, ecg_hat=ecg_hat)
-        print(f"  M={M:2d}  Fc={Fc:9.2f} Hz  N={N}  "
-              f"CR={cr:6.2f}  SDR={sdr:6.2f} dB")
 
-    return t, ecg, results
+	fs = 2385 # upsample to match paper's Fc for M=7
+	t, ecg = generate_synthetic_ecg(duration_s=3.0, fs=fs)
+
+	results = {}
+	for M in range(2, 12):
+		Fc, N = TABLE_I[M]
+		t_ev, amp_ev, ti_ev = lcadc_model(t, ecg, M=M, Fc=Fc, N=N,
+										  delta_v_lsbs=1)
+		if len(t_ev) < 3:
+			continue
+		ecg_hat = reconstruct_signal(t_ev, amp_ev, t, Fc)
+		sdr = compute_SDR(ecg, ecg_hat)
+		cr  = compute_CR(len(ecg), fs, t_ev, M, N, Fc)
+		results[M] = dict(Fc=Fc, N=N, SDR=sdr, CR=cr,
+						  t_ev=t_ev, amp_ev=amp_ev, ecg_hat=ecg_hat)
+		print(f"  M={M:2d}  Fc={Fc:9.2f} Hz  N={N}  "
+			  f"CR={cr:6.2f}  SDR={sdr:6.2f} dB")
+
+	return t, ecg, results
 
 
 # ─────────────────────────────────────────────
-# 7.  PLOTTING
+# PLOTTING
 # ─────────────────────────────────────────────
 def make_plots(t, ecg, results):
-    M_vals = sorted(results.keys())
-    SDRs   = [results[m]['SDR'] for m in M_vals]
-    CRs    = [results[m]['CR']  for m in M_vals]
+	"""
+	Creates Plots of the Simulated LC-ADC and Noises
+	"""
+	# --- Local Variables ---
+	M_vals = 	list # Resolution List
+	SDRs = 		list # SDR List
+	CRs =		list # CR List
+	show_M = 	list # Ms to show
+	t_zoom = 	bool # Boolean to decide size of plot.
 
-    # ── Figure 1: SDR & CR vs Resolution ──────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    fig.suptitle("LC-ADC Performance vs Resolution\n"
-                 "(Micromodel – Saeed et al. 2021)", fontsize=13, fontweight='bold')
+	M_vals = sorted(results.keys())
+	SDRs   = [results[m]['SDR'] for m in M_vals]
+	CRs    = [results[m]['CR']  for m in M_vals]
 
-    ax = axes[0]
-    ax.plot(M_vals, SDRs, 'bo-', linewidth=2, markersize=7)
-    ax.axhline(21, color='red', linestyle='--', linewidth=1.5, label='SDR = 21 dB ("Good")')
-    ax.set_xlabel("LC-ADC Resolution M (bits)")
-    ax.set_ylabel("SDR (dB)")
-    ax.set_title("Signal-to-Distortion Ratio")
-    ax.legend(); ax.grid(True, alpha=0.3)
-    ax.set_xticks(M_vals)
+	# ── Figure 1: SDR & CR vs Resolution ──────────────────────────
+	fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+	fig.suptitle("LC-ADC Performance vs Resolution\n"
+				 , fontsize=13, fontweight='bold')
 
-    ax = axes[1]
-    ax.plot(M_vals, CRs, 'gs-', linewidth=2, markersize=7)
-    ax.axhline(1.5, color='orange', linestyle='--', linewidth=1.5, label='CR = 1.5 (min acceptable)')
-    ax.axhline(1.0, color='red',    linestyle=':',  linewidth=1.2, label='CR = 1 (no compression)')
-    ax.set_xlabel("LC-ADC Resolution M (bits)")
-    ax.set_ylabel("Compression Ratio (CR)")
-    ax.set_title("Compression Ratio")
-    ax.legend(); ax.grid(True, alpha=0.3)
-    ax.set_xticks(M_vals)
+	ax = axes[0]
+	ax.plot(M_vals, SDRs, 'bo-', linewidth=2, markersize=7)
+	ax.axhline(21, color='red', linestyle='--', linewidth=1.5, label='SDR = 21 dB ("Good")')
+	ax.set_xlabel("LC-ADC Resolution M (bits)")
+	ax.set_ylabel("SDR (dB)")
+	ax.set_title("Signal-to-Distortion Ratio")
+	ax.legend(); ax.grid(True, alpha=0.3)
+	ax.set_xticks(M_vals)
 
-    plt.tight_layout()
-    plt.savefig("/mnt/user-data/outputs/lcadc_performance.png", dpi=150, bbox_inches='tight')
-    plt.close()
+	ax = axes[1]
+	ax.plot(M_vals, CRs, 'gs-', linewidth=2, markersize=7)
+	ax.axhline(1.5, color='orange', linestyle='--', linewidth=1.5, label='CR = 1.5 (min acceptable)')
+	ax.axhline(1.0, color='red',    linestyle=':',  linewidth=1.2, label='CR = 1 (no compression)')
+	ax.set_xlabel("LC-ADC Resolution M (bits)")
+	ax.set_ylabel("Compression Ratio (CR)")
+	ax.set_title("Compression Ratio")
+	ax.legend(); ax.grid(True, alpha=0.3)
+	ax.set_xticks(M_vals)
 
-    # ── Figure 2: Waveform comparison for key resolutions ─────────
-    show_M = [4, 7, 9]
-    fig, axes = plt.subplots(len(show_M), 1, figsize=(13, 10), sharex=True)
-    fig.suptitle("LC-ADC Event-Driven Sampling vs Original ECG\n"
-                 "(Micromodel – Saeed et al. 2021)", fontsize=13, fontweight='bold')
+	plt.tight_layout()
+	plt.savefig("./lcadc_performance.png", dpi=150, bbox_inches='tight')
+	plt.close()
 
-    t_zoom = (t >= 0.2) & (t <= 2.5)
+	# ── Figure 2: Waveform comparison for key resolutions ─────────
+	show_M = [4, 7, 9]
+	fig, axes = plt.subplots(len(show_M), 1, figsize=(13, 10), sharex=True)
+	fig.suptitle("LC-ADC Event-Driven Sampling vs Original ECG\n"
+				 , fontsize=13, fontweight='bold')
 
-    for idx, M in enumerate(show_M):
-        ax = axes[idx]
-        r = results[M]
-        ax.plot(t[t_zoom], ecg[t_zoom]*1e3, 'gray', linewidth=1.2,
-                alpha=0.6, label='ECG_in (original)')
-        ax.plot(t[t_zoom], r['ecg_hat'][t_zoom]*1e3, 'b-', linewidth=1.5,
-                label='ECG reconstructed')
-        ev_mask = (r['t_ev'] >= 0.2) & (r['t_ev'] <= 2.5)
-        ax.scatter(r['t_ev'][ev_mask], r['amp_ev'][ev_mask]*1e3,
-                   color='red', s=12, zorder=5, label='LC events')
-        ax.set_ylabel("ECG (mV)")
-        ax.set_title(f"M={M} bits | Fc={r['Fc']:.0f} Hz | N={r['N']} | "
-                     f"CR={r['CR']:.2f} | SDR={r['SDR']:.1f} dB")
-        ax.legend(loc='upper right', fontsize=8)
-        ax.grid(True, alpha=0.25)
+	t_zoom = (t >= 0.2) & (t <= 2.5)
 
-    axes[-1].set_xlabel("Time (s)")
-    plt.tight_layout()
-    plt.savefig("/mnt/user-data/outputs/lcadc_waveforms.png", dpi=150, bbox_inches='tight')
-    plt.close()
+	for idx, M in enumerate(show_M):
+		ax = axes[idx]
+		r = results[M]
+		ax.plot(t[t_zoom], ecg[t_zoom]*1e3, 'gray', linewidth=1.2,
+				alpha=0.6, label='ECG_in (original)')
+		ax.plot(t[t_zoom], r['ecg_hat'][t_zoom]*1e3, 'b-', linewidth=1.5,
+				label='ECG reconstructed')
+		ev_mask = (r['t_ev'] >= 0.2) & (r['t_ev'] <= 2.5)
+		ax.scatter(r['t_ev'][ev_mask], r['amp_ev'][ev_mask]*1e3,
+				   color='red', s=12, zorder=5, label='LC events')
+		ax.set_ylabel("ECG (mV)")
+		ax.set_title(f"M={M} bits | Fc={r['Fc']:.0f} Hz | N={r['N']} | "
+					 f"CR={r['CR']:.2f} | SDR={r['SDR']:.1f} dB")
+		ax.legend(loc='upper right', fontsize=8)
+		ax.grid(True, alpha=0.25)
 
-    # ── Figure 3: SDR vs CR trade-off bubble chart ─────────────────
-    fig, ax = plt.subplots(figsize=(8, 6))
-    sc = ax.scatter(CRs, SDRs, c=M_vals, cmap='viridis',
-                    s=120, zorder=5, edgecolors='k', linewidths=0.8)
-    for M in M_vals:
-        ax.annotate(f"M={M}", (results[M]['CR'], results[M]['SDR']),
-                    textcoords="offset points", xytext=(6, 4), fontsize=8)
-    ax.axhline(21,  color='red',    linestyle='--', label='SDR = 21 dB')
-    ax.axvline(1.5, color='orange', linestyle='--', label='CR = 1.5')
-    plt.colorbar(sc, label='M (bits)')
-    ax.set_xlabel("Compression Ratio (CR)")
-    ax.set_ylabel("SDR (dB)")
-    ax.set_title("SDR vs CR Trade-off  (Saeed et al. 2021 – Micromodel)")
-    ax.legend(); ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig("/mnt/user-data/outputs/lcadc_tradeoff.png", dpi=150, bbox_inches='tight')
-    plt.close()
+	axes[-1].set_xlabel("Time (s)")
+	plt.tight_layout()
+	plt.savefig("./lcadc_waveforms.png", dpi=150, bbox_inches='tight')
+	plt.close()
 
-    # ── Figure 4: Event counts per beat ───────────────────────────
-    fig, ax = plt.subplots(figsize=(8, 4))
-    event_counts = [len(results[m]['t_ev']) for m in M_vals]
-    bars = ax.bar(M_vals, event_counts, color='steelblue', edgecolor='k', alpha=0.85)
-    ax.set_xlabel("LC-ADC Resolution M (bits)")
-    ax.set_ylabel("Total Level-Crossing Events")
-    ax.set_title("Event Count vs Resolution (3-second ECG segment)")
-    ax.set_xticks(M_vals)
-    for bar, cnt in zip(bars, event_counts):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
-                str(cnt), ha='center', va='bottom', fontsize=8)
-    ax.grid(True, axis='y', alpha=0.3)
-    plt.tight_layout()
-    plt.savefig("/mnt/user-data/outputs/lcadc_event_counts.png", dpi=150, bbox_inches='tight')
-    plt.close()
+	# ── Figure 3: SDR vs CR trade-off bubble chart ─────────────────
+	fig, ax = plt.subplots(figsize=(8, 6))
+	sc = ax.scatter(CRs, SDRs, c=M_vals, cmap='viridis',
+					s=120, zorder=5, edgecolors='k', linewidths=0.8)
+	for M in M_vals:
+		ax.annotate(f"M={M}", (results[M]['CR'], results[M]['SDR']),
+					textcoords="offset points", xytext=(6, 4), fontsize=8)
+	ax.axhline(21,  color='red',    linestyle='--', label='SDR = 21 dB')
+	ax.axvline(1.5, color='orange', linestyle='--', label='CR = 1.5')
+	plt.colorbar(sc, label='M (bits)')
+	ax.set_xlabel("Compression Ratio (CR)")
+	ax.set_ylabel("SDR (dB)")
+	ax.set_title("SDR vs CR Trade-off  (– Micromodel)")
+	ax.legend(); ax.grid(True, alpha=0.3)
+	plt.tight_layout()
+	plt.savefig("./lcadc_tradeoff.png", dpi=150, bbox_inches='tight')
+	plt.close()
 
-    print("\nAll plots saved.")
+	# ── Figure 4: Event counts per beat ───────────────────────────
+	fig, ax = plt.subplots(figsize=(8, 4))
+	event_counts = [len(results[m]['t_ev']) for m in M_vals]
+	bars = ax.bar(M_vals, event_counts, color='steelblue', edgecolor='k', alpha=0.85)
+	ax.set_xlabel("LC-ADC Resolution M (bits)")
+	ax.set_ylabel("Total Level-Crossing Events")
+	ax.set_title("Event Count vs Resolution (3-second ECG segment)")
+	ax.set_xticks(M_vals)
+	for bar, cnt in zip(bars, event_counts):
+		ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
+				str(cnt), ha='center', va='bottom', fontsize=8)
+	ax.grid(True, axis='y', alpha=0.3)
+	plt.tight_layout()
+	plt.savefig("./lcadc_event_counts.png", dpi=150, bbox_inches='tight')
+	plt.close()
+
+	print("\nAll plots saved.")
 
 
 # ─────────────────────────────────────────────
-# 8.  PRINT SUMMARY TABLE
+# PRINT SUMMARY TABLE
 # ─────────────────────────────────────────────
 def print_summary(results):
     print("\n" + "="*65)
@@ -348,7 +398,7 @@ def print_summary(results):
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     print("LC-ADC Micromodel Simulation")
-    print("Saeed et al. IEEE TBCAS 2021  |  ECEN432 TAMU\n")
+    print("ECEN432 TAMU\n")
     print(f"{'M':>3} {'Fc (Hz)':>10} {'N':>3} {'CR':>7} {'SDR (dB)':>10}")
     print("-"*45)
 
